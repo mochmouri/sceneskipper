@@ -119,7 +119,18 @@ async function processTab(tabId) {
       throw new Error('No subtitle cues found in the VTT file.');
     }
 
-    const skipList = await callGemini(subtitles, movieTitle, apiKey);
+    const geminiList = await callGemini(subtitles, movieTitle, apiKey);
+    const gapList    = detectSilentGaps(subtitles);
+
+    // Merge: drop gap entries that overlap with something Gemini already flagged
+    const merged = [
+      ...geminiList,
+      ...gapList.filter(gap =>
+        !geminiList.some(g => rangesOverlap(g, gap))
+      )
+    ];
+
+    const skipList = merged;
     await cacheResult(movieTitle, skipList);
 
     notifyContent(tabId, { type: 'SKIP_LIST', skipList, movieTitle, fromCache: false });
@@ -255,6 +266,60 @@ ${subtitleText}`;
 
   if (!Array.isArray(parsed)) throw new Error('Gemini response was not a JSON array.');
   return parsed;
+}
+
+// ── Gap detection ─────────────────────────────────────────────────────────────
+
+const GAP_THRESHOLD_S = 90;   // flag silence gaps longer than this
+const EDGE_BUFFER_S   = 300;  // ignore gaps in the first/last 5 min (titles, credits)
+
+function detectSilentGaps(subtitles) {
+  if (subtitles.length < 2) return [];
+
+  const gaps = [];
+
+  for (let i = 1; i < subtitles.length; i++) {
+    const prevEnd   = tsToSeconds(subtitles[i - 1].end);
+    const nextStart = tsToSeconds(subtitles[i].start);
+    const gapLen    = nextStart - prevEnd;
+
+    if (gapLen < GAP_THRESHOLD_S) continue;
+
+    // Ignore gaps too close to the start or end of the film
+    if (prevEnd < EDGE_BUFFER_S) continue;
+    const filmEnd = tsToSeconds(subtitles[subtitles.length - 1].end);
+    if (nextStart > filmEnd - EDGE_BUFFER_S) continue;
+
+    gaps.push({
+      start:      secondsToTs(prevEnd),
+      end:        secondsToTs(nextStart),
+      confidence: 'low',
+      reason:     `No dialogue for ${Math.round(gapLen)}s`
+    });
+  }
+
+  return gaps;
+}
+
+function rangesOverlap(a, b) {
+  const aStart = tsToSeconds(a.start), aEnd = tsToSeconds(a.end);
+  const bStart = tsToSeconds(b.start), bEnd = tsToSeconds(b.end);
+  return aStart < bEnd && bStart < aEnd;
+}
+
+function tsToSeconds(ts) {
+  if (!ts) return 0;
+  const parts = String(ts).split(':').map(parseFloat);
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  return parseFloat(ts) || 0;
+}
+
+function secondsToTs(secs) {
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = Math.floor(secs % 60);
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
 }
 
 // ── Storage helpers ───────────────────────────────────────────────────────────
