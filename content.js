@@ -21,6 +21,8 @@
 
   injectStyles();
   waitForVideo();
+  // Retry after 2.5 s in case the player mounts late (common on SPAs)
+  setTimeout(() => { if (!videoEl) waitForVideo(); }, 2500);
   loadSettings();
 
   // ── Listen for messages from background ───────────────────────────────────
@@ -73,13 +75,17 @@
   }
 
   function findVideo() {
-    const candidates = [...document.querySelectorAll('video')].filter(
-      v => v.readyState >= 2 || v.duration > 0
-    );
-    if (candidates.length === 0) return false;
+    const videos = Array.from(document.querySelectorAll('video'));
+    if (videos.length === 0) return false;
 
-    // Pick the longest (most likely the main feature)
-    videoEl = candidates.reduce((a, b) => (b.duration > a.duration ? b : a));
+    // Pick the video with the largest rendered area on screen
+    const largest = videos.reduce((best, v) =>
+      v.offsetWidth * v.offsetHeight > best.offsetWidth * best.offsetHeight ? v : best
+    );
+
+    if (largest.offsetWidth === 0 && largest.offsetHeight === 0) return false;
+
+    videoEl = largest;
     startPolling();
     return true;
   }
