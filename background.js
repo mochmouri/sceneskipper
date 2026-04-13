@@ -1,183 +1,128 @@
 // background.js — service worker
-// Handles: VTT interception, Gemini API calls, caching, storage
+// Handles: OpenSubtitles search/download, subtitle parsing, Gemini calls, caching, storage
 
-const STREAMING_HOSTS = [
-  'netflix.com', 'primevideo.com', 'disneyplus.com',
-  'hbomax.com', 'max.com', 'hulu.com', 'peacocktv.com'
-];
+const OS_API_BASE  = 'https://api.opensubtitles.com/api/v1';
+const OS_USER_AGENT = 'SceneSkipper v1.1';
 
-// Map of tabId -> { vttUrl, movieTitle }
-const tabState = new Map();
-// Set of tabIds currently being processed
-const processing = new Set();
+// ── OpenSubtitles ─────────────────────────────────────────────────────────────
 
-// ── VTT interception ─────────────────────────────────────────────────────────
+async function searchSubtitles(query, osApiKey) {
+  const params = new URLSearchParams({
+    query,
+    languages:       'en',
+    order_by:        'download_count',
+    order_direction: 'desc',
+    per_page:        '10',
+  });
 
-browser.webRequest.onCompleted.addListener(
-  async (details) => {
-    if (details.tabId < 0) return;
+  const res = await fetch(`${OS_API_BASE}/subtitles?${params}`, {
+    headers: osHeaders(osApiKey),
+  });
 
-    const url = details.url;
-    if (!looksLikeSubtitle(url)) return;
-
-    // Only handle tabs on streaming sites
-    let tab;
-    try {
-      tab = await browser.tabs.get(details.tabId);
-    } catch {
-      return;
-    }
-    if (!tab || !isStreamingTab(tab.url)) return;
-
-    const tabId = details.tabId;
-    const existing = tabState.get(tabId);
-
-    // Avoid reprocessing the same URL
-    if (existing && existing.vttUrl === url) return;
-
-    const movieTitle = extractMovieTitle(tab.title);
-    tabState.set(tabId, { vttUrl: url, movieTitle });
-
-    notifyContent(tabId, { type: 'VTT_DETECTED' });
-    scheduleProcessing(tabId);
-  },
-  { urls: ['<all_urls>'] }
-);
-
-function looksLikeSubtitle(url) {
-  const lower = url.toLowerCase();
-  // Match .vtt files; exclude manifest/playlist files
-  if (lower.includes('.vtt')) return true;
-  // Some services use query params instead of extensions
-  if ((lower.includes('subtitle') || lower.includes('caption')) &&
-      (lower.includes('format=vtt') || lower.includes('type=vtt'))) return true;
-  return false;
-}
-
-function isStreamingTab(url) {
-  if (!url) return false;
-  return STREAMING_HOSTS.some(h => url.includes(h));
-}
-
-function extractMovieTitle(rawTitle) {
-  if (!rawTitle) return 'Unknown Title';
-  // Strip common streaming site suffixes
-  return rawTitle
-    .replace(/\s*[|\-–]\s*(Netflix|Prime Video|Disney\+|Max|Hulu|Peacock).*$/i, '')
-    .replace(/\s*[|\-–]\s*Watch.*$/i, '')
-    .trim() || rawTitle.trim();
-}
-
-// Slight delay so the tab title has time to update after VTT load
-function scheduleProcessing(tabId) {
-  setTimeout(() => processTab(tabId), 1500);
-}
-
-// ── Main processing pipeline ──────────────────────────────────────────────────
-
-async function processTab(tabId) {
-  if (processing.has(tabId)) return;
-
-  const state = tabState.get(tabId);
-  if (!state) return;
-
-  const { apiKey } = await browser.storage.local.get('apiKey');
-  if (!apiKey) {
-    notifyContent(tabId, { type: 'NO_API_KEY' });
-    return;
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Search failed (${res.status}): ${body.slice(0, 200)}`);
   }
 
-  // Re-read title in case it updated
-  try {
-    const tab = await browser.tabs.get(tabId);
-    if (tab.title) state.movieTitle = extractMovieTitle(tab.title);
-  } catch { /* tab may have closed */ }
-
-  const { movieTitle, vttUrl } = state;
-
-  // Check cache first
-  const cacheKey = `cache_${movieTitle}`;
-  const stored = await browser.storage.local.get(cacheKey);
-  if (stored[cacheKey]) {
-    notifyContent(tabId, {
-      type: 'SKIP_LIST',
-      skipList: stored[cacheKey].skipList,
-      movieTitle,
-      fromCache: true
-    });
-    return;
-  }
-
-  processing.add(tabId);
-  notifyContent(tabId, { type: 'PROCESSING_START', movieTitle });
-
-  try {
-    const vttText = await fetchVtt(vttUrl);
-    const subtitles = parseVtt(vttText);
-
-    if (subtitles.length === 0) {
-      throw new Error('No subtitle cues found in the VTT file.');
-    }
-
-    const geminiList = await callGemini(subtitles, movieTitle, apiKey);
-    const gapList    = detectSilentGaps(subtitles);
-
-    // Merge: drop gap entries that overlap with something Gemini already flagged
-    const merged = [
-      ...geminiList,
-      ...gapList.filter(gap =>
-        !geminiList.some(g => rangesOverlap(g, gap))
-      )
-    ];
-
-    const skipList = merged;
-    await cacheResult(movieTitle, skipList);
-
-    notifyContent(tabId, { type: 'SKIP_LIST', skipList, movieTitle, fromCache: false });
-  } catch (err) {
-    notifyContent(tabId, { type: 'PROCESSING_ERROR', error: err.message });
-  } finally {
-    processing.delete(tabId);
-  }
+  const json = await res.json();
+  return json.data || [];
 }
 
-// ── VTT fetch & parse ─────────────────────────────────────────────────────────
+async function downloadSubtitle(fileId, osApiKey) {
+  const res = await fetch(`${OS_API_BASE}/download`, {
+    method:  'POST',
+    headers: osHeaders(osApiKey),
+    body:    JSON.stringify({ file_id: fileId }),
+  });
 
-async function fetchVtt(url) {
-  const res = await fetch(url, { credentials: 'omit' });
-  if (!res.ok) throw new Error(`Failed to fetch subtitles (HTTP ${res.status}).`);
-  return res.text();
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Download request failed (${res.status}): ${body.slice(0, 200)}`);
+  }
+
+  const json = await res.json();
+  if (!json.link) throw new Error(json.message || 'No download link returned.');
+
+  const fileRes = await fetch(json.link);
+  if (!fileRes.ok) throw new Error(`Failed to fetch subtitle file (${fileRes.status}).`);
+
+  return {
+    content:   await fileRes.text(),
+    fileName:  json.file_name  || 'subtitle.srt',
+    remaining: json.remaining  ?? null,
+  };
+}
+
+function osHeaders(key) {
+  return {
+    'Api-Key':      key,
+    'Content-Type': 'application/json',
+    'User-Agent':   OS_USER_AGENT,
+  };
+}
+
+// ── Subtitle parsing ──────────────────────────────────────────────────────────
+
+function parseSubtitleContent(content, fileName) {
+  const isVtt = fileName.toLowerCase().endsWith('.vtt') ||
+                content.trimStart().startsWith('WEBVTT');
+  return isVtt ? parseVtt(content) : parseSRT(content);
+}
+
+function parseSRT(text) {
+  const subtitles = [];
+  const blocks = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim().split(/\n\n+/);
+
+  for (const block of blocks) {
+    const lines = block.trim().split('\n');
+    if (lines.length < 2) continue;
+
+    // First line may be a sequence number — skip it if it has no arrow
+    const tIdx = lines[0].includes('-->') ? 0 : 1;
+    if (tIdx >= lines.length) continue;
+
+    const match = lines[tIdx].match(
+      /(\d{1,2}:\d{2}:\d{2}[,\.]\d{1,3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}[,\.]\d{1,3})/
+    );
+    if (!match) continue;
+
+    const start = normaliseTs(match[1]);
+    const end   = normaliseTs(match[2]);
+    const parts = lines.slice(tIdx + 1)
+      .map(l => l.replace(/<[^>]+>/g, '').replace(/\{[^}]+\}/g, '').trim())
+      .filter(Boolean);
+
+    if (parts.length) subtitles.push({ start, end, text: parts.join(' ') });
+  }
+
+  return subtitles;
 }
 
 function parseVtt(text) {
   const subtitles = [];
-  // Normalise line endings
   const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
   let i = 0;
 
-  // Skip WEBVTT header block
   while (i < lines.length && !lines[i].includes('-->')) i++;
 
   while (i < lines.length) {
     const line = lines[i].trim();
 
     if (line.includes('-->')) {
-      const tsMatch = line.match(
+      const match = line.match(
         /(\d{1,2}:\d{2}:\d{2}[.,]\d{1,3}|\d{2}:\d{2}[.,]\d{1,3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}[.,]\d{1,3}|\d{2}:\d{2}[.,]\d{1,3})/
       );
-      if (tsMatch) {
-        const start = normaliseTs(tsMatch[1]);
-        const end   = normaliseTs(tsMatch[2]);
-        const textParts = [];
+      if (match) {
+        const start = normaliseTs(match[1]);
+        const end   = normaliseTs(match[2]);
+        const parts = [];
         i++;
         while (i < lines.length && lines[i].trim() !== '') {
           const clean = lines[i].replace(/<[^>]+>/g, '').trim();
-          if (clean) textParts.push(clean);
+          if (clean) parts.push(clean);
           i++;
         }
-        if (textParts.length > 0) {
-          subtitles.push({ start, end, text: textParts.join(' ') });
-        }
+        if (parts.length) subtitles.push({ start, end, text: parts.join(' ') });
         continue;
       }
     }
@@ -187,15 +132,51 @@ function parseVtt(text) {
   return subtitles;
 }
 
-// Normalise VTT timestamp → HH:MM:SS.mmm
 function normaliseTs(ts) {
   const clean = ts.replace(',', '.');
   const parts = clean.split(':');
-  if (parts.length === 2) {
-    // MM:SS.mmm → 00:MM:SS.mmm
-    return `00:${parts[0].padStart(2,'0')}:${parts[1]}`;
-  }
+  if (parts.length === 2) return `00:${parts[0].padStart(2,'0')}:${parts[1]}`;
   return `${parts[0].padStart(2,'0')}:${parts[1]}:${parts[2]}`;
+}
+
+// ── Analysis pipeline ─────────────────────────────────────────────────────────
+
+async function analyseSubtitle({ fileId, movieTitle, tabId }) {
+  const { geminiApiKey, osApiKey } = await browser.storage.local.get(['geminiApiKey', 'osApiKey']);
+
+  if (!geminiApiKey) throw new Error('No Gemini API key set — add it in Settings.');
+  if (!osApiKey)     throw new Error('No OpenSubtitles API key set — add it in Settings.');
+
+  // Cache hit
+  const cacheKey = `cache_${movieTitle}`;
+  const stored   = await browser.storage.local.get(cacheKey);
+  if (stored[cacheKey]) {
+    if (tabId != null) notifyContent(tabId, {
+      type: 'SKIP_LIST', skipList: stored[cacheKey].skipList, movieTitle, fromCache: true
+    });
+    return { skipList: stored[cacheKey].skipList, fromCache: true };
+  }
+
+  // Download
+  const dl        = await downloadSubtitle(fileId, osApiKey);
+  const subtitles = parseSubtitleContent(dl.content, dl.fileName);
+  if (subtitles.length === 0) throw new Error('No subtitle cues found in the downloaded file.');
+
+  // Analyse
+  const geminiList = await callGemini(subtitles, movieTitle, geminiApiKey);
+  const gapList    = detectSilentGaps(subtitles);
+  const skipList   = [
+    ...geminiList,
+    ...gapList.filter(gap => !geminiList.some(g => rangesOverlap(g, gap))),
+  ];
+
+  await cacheResult(movieTitle, skipList);
+
+  if (tabId != null) notifyContent(tabId, {
+    type: 'SKIP_LIST', skipList, movieTitle, fromCache: false
+  });
+
+  return { skipList, fromCache: false, remaining: dl.remaining };
 }
 
 // ── Gemini API ────────────────────────────────────────────────────────────────
@@ -233,15 +214,12 @@ ${subtitleText}`;
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${apiKey}`;
 
   const res = await fetch(endpoint, {
-    method: 'POST',
+    method:  'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: {
-        temperature: 0.1,
-        responseMimeType: 'application/json'
-      }
-    })
+    body:    JSON.stringify({
+      contents:       [{ parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0.1, responseMimeType: 'application/json' },
+    }),
   });
 
   if (!res.ok) {
@@ -251,14 +229,13 @@ ${subtitleText}`;
   }
 
   const data = await res.json();
-  const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  const raw  = data?.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!raw) throw new Error('Gemini returned an empty response.');
 
   let parsed;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    // Try to extract a JSON array from the text
     const match = raw.match(/\[[\s\S]*\]/);
     if (!match) throw new Error('Could not parse Gemini response as JSON.');
     parsed = JSON.parse(match[0]);
@@ -270,12 +247,11 @@ ${subtitleText}`;
 
 // ── Gap detection ─────────────────────────────────────────────────────────────
 
-const GAP_THRESHOLD_S = 90;   // flag silence gaps longer than this
-const EDGE_BUFFER_S   = 300;  // ignore gaps in the first/last 5 min (titles, credits)
+const GAP_THRESHOLD_S = 90;
+const EDGE_BUFFER_S   = 300;
 
 function detectSilentGaps(subtitles) {
   if (subtitles.length < 2) return [];
-
   const gaps = [];
 
   for (let i = 1; i < subtitles.length; i++) {
@@ -284,9 +260,8 @@ function detectSilentGaps(subtitles) {
     const gapLen    = nextStart - prevEnd;
 
     if (gapLen < GAP_THRESHOLD_S) continue;
+    if (prevEnd < EDGE_BUFFER_S)  continue;
 
-    // Ignore gaps too close to the start or end of the film
-    if (prevEnd < EDGE_BUFFER_S) continue;
     const filmEnd = tsToSeconds(subtitles[subtitles.length - 1].end);
     if (nextStart > filmEnd - EDGE_BUFFER_S) continue;
 
@@ -294,7 +269,7 @@ function detectSilentGaps(subtitles) {
       start:      secondsToTs(prevEnd),
       end:        secondsToTs(nextStart),
       confidence: 'low',
-      reason:     `No dialogue for ${Math.round(gapLen)}s`
+      reason:     `No dialogue for ${Math.round(gapLen)}s`,
     });
   }
 
@@ -302,9 +277,9 @@ function detectSilentGaps(subtitles) {
 }
 
 function rangesOverlap(a, b) {
-  const aStart = tsToSeconds(a.start), aEnd = tsToSeconds(a.end);
-  const bStart = tsToSeconds(b.start), bEnd = tsToSeconds(b.end);
-  return aStart < bEnd && bStart < aEnd;
+  const aS = tsToSeconds(a.start), aE = tsToSeconds(a.end);
+  const bS = tsToSeconds(b.start), bE = tsToSeconds(b.end);
+  return aS < bE && bS < aE;
 }
 
 function tsToSeconds(ts) {
@@ -331,21 +306,14 @@ async function cacheResult(movieTitle, skipList) {
   });
 
   const { history = {} } = await browser.storage.local.get('history');
-  if (!history[movieTitle]) {
-    history[movieTitle] = {
-      movieTitle,
-      processedAt: Date.now(),
-      scenesSkipped: 0,
-      scenes: skipList
-    };
-  } else {
-    history[movieTitle].scenes = skipList;
-    history[movieTitle].processedAt = Date.now();
-  }
+  history[movieTitle] = {
+    movieTitle,
+    processedAt:  Date.now(),
+    scenesSkipped: history[movieTitle]?.scenesSkipped || 0,
+    scenes:        skipList,
+  };
   await browser.storage.local.set({ history });
 }
-
-// ── Notify content script (fire-and-forget) ───────────────────────────────────
 
 function notifyContent(tabId, msg) {
   browser.tabs.sendMessage(tabId, msg).catch(() => {});
@@ -356,73 +324,65 @@ function notifyContent(tabId, msg) {
 browser.runtime.onMessage.addListener((msg, sender) => {
   switch (msg.type) {
 
-    case 'RETRY_ANALYSIS': {
-      const tabId = sender.tab?.id;
-      if (tabId != null) {
-        processing.delete(tabId);
-        processTab(tabId);
-      }
-      return Promise.resolve(true);
-    }
-
-    case 'SCENE_SKIPPED': {
+    case 'SEARCH_SUBTITLES':
       return (async () => {
-        const { movieTitle } = msg;
+        const { osApiKey } = await browser.storage.local.get('osApiKey');
+        if (!osApiKey) throw new Error('No OpenSubtitles API key set — add it in Settings.');
+        return searchSubtitles(msg.query, osApiKey);
+      })();
+
+    case 'ANALYSE_SUBTITLE':
+      return analyseSubtitle(msg);
+
+    case 'SCENE_SKIPPED':
+      return (async () => {
         const { history = {} } = await browser.storage.local.get('history');
-        if (history[movieTitle]) {
-          history[movieTitle].scenesSkipped = (history[movieTitle].scenesSkipped || 0) + 1;
+        if (history[msg.movieTitle]) {
+          history[msg.movieTitle].scenesSkipped =
+            (history[msg.movieTitle].scenesSkipped || 0) + 1;
           await browser.storage.local.set({ history });
         }
         return true;
       })();
-    }
 
     case 'GET_HISTORY':
       return browser.storage.local.get('history').then(s => s.history || {});
 
-    case 'CLEAR_HISTORY_ITEM': {
+    case 'CLEAR_HISTORY_ITEM':
       return (async () => {
-        const { movieTitle } = msg;
         const { history = {} } = await browser.storage.local.get('history');
-        delete history[movieTitle];
+        delete history[msg.movieTitle];
         await browser.storage.local.set({ history });
-        await browser.storage.local.remove(`cache_${movieTitle}`);
+        await browser.storage.local.remove(`cache_${msg.movieTitle}`);
         return true;
       })();
-    }
 
-    case 'CLEAR_ALL_HISTORY': {
+    case 'CLEAR_ALL_HISTORY':
       return (async () => {
         const { history = {} } = await browser.storage.local.get('history');
         const cacheKeys = Object.keys(history).map(t => `cache_${t}`);
         await browser.storage.local.remove(['history', ...cacheKeys]);
         return true;
       })();
-    }
 
     case 'GET_SETTINGS':
-      return browser.storage.local.get(['apiKey', 'autoSkipHigh', 'autoSkipMedium', 'autoSkipLow'])
+      return browser.storage.local
+        .get(['geminiApiKey', 'osApiKey', 'autoSkipHigh', 'autoSkipMedium', 'autoSkipLow'])
         .then(s => ({
-          apiKey:        s.apiKey        || '',
-          autoSkipHigh:  s.autoSkipHigh  !== false,  // default on
-          autoSkipMedium:s.autoSkipMedium !== false,  // default on
-          autoSkipLow:   s.autoSkipLow   === true     // default off
+          geminiApiKey:   s.geminiApiKey   || '',
+          osApiKey:       s.osApiKey       || '',
+          autoSkipHigh:   s.autoSkipHigh   !== false,
+          autoSkipMedium: s.autoSkipMedium !== false,
+          autoSkipLow:    s.autoSkipLow    === true,
         }));
 
     case 'SAVE_SETTINGS':
       return browser.storage.local.set({
-        apiKey:         msg.apiKey,
+        geminiApiKey:   msg.geminiApiKey,
+        osApiKey:       msg.osApiKey,
         autoSkipHigh:   msg.autoSkipHigh,
         autoSkipMedium: msg.autoSkipMedium,
-        autoSkipLow:    msg.autoSkipLow
+        autoSkipLow:    msg.autoSkipLow,
       }).then(() => true);
-
-    case 'GET_TAB_STATE': {
-      const tabId = sender.tab?.id;
-      if (tabId != null && tabState.has(tabId)) {
-        return Promise.resolve({ ...tabState.get(tabId), processing: processing.has(tabId) });
-      }
-      return Promise.resolve(null);
-    }
   }
 });

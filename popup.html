@@ -17,17 +17,45 @@
       SceneSkipper
     </div>
     <nav class="tabs" role="tablist">
-      <button class="tab active" data-tab="history" role="tab" aria-selected="true">History</button>
-      <button class="tab" data-tab="settings" role="tab" aria-selected="false">Settings</button>
+      <button class="tab active" data-tab="analyse"  role="tab" aria-selected="true">Analyse</button>
+      <button class="tab"        data-tab="history"  role="tab" aria-selected="false">History</button>
+      <button class="tab"        data-tab="settings" role="tab" aria-selected="false">Settings</button>
     </nav>
   </header>
 
+  <!-- ── Analyse tab ─────────────────────────────────────────── -->
+  <section id="tab-analyse" class="tab-panel active" role="tabpanel">
+
+    <div class="search-row">
+      <input
+        type="text"
+        id="search-input"
+        class="input"
+        placeholder="Movie or show title…"
+        autocomplete="off"
+        spellcheck="false"
+      >
+      <button class="btn btn-primary" id="btn-search">Search</button>
+    </div>
+
+    <div id="search-status" class="status-msg" hidden></div>
+
+    <ul id="results-list" hidden></ul>
+
+    <div id="analyse-done" class="analyse-done" hidden>
+      <div id="analyse-done-icon" class="done-icon">✓</div>
+      <div id="analyse-done-text"></div>
+    </div>
+
+  </section>
+
   <!-- ── History tab ─────────────────────────────────────────── -->
-  <section id="tab-history" class="tab-panel active" role="tabpanel">
+  <section id="tab-history" class="tab-panel" role="tabpanel" hidden>
+
     <div id="history-empty" class="empty-state" hidden>
       <div class="empty-icon">📂</div>
       <p>No movies analysed yet.</p>
-      <p class="hint">Play something on Netflix, Prime Video, Disney+, or another supported site with subtitles enabled.</p>
+      <p class="hint">Use the Analyse tab to search for a movie and flag its scenes.</p>
     </div>
 
     <div id="history-list"></div>
@@ -35,66 +63,58 @@
     <div class="history-footer" id="history-footer" hidden>
       <button class="btn btn-ghost btn-sm" id="btn-clear-all">Clear all history</button>
     </div>
+
   </section>
 
   <!-- ── Settings tab ────────────────────────────────────────── -->
   <section id="tab-settings" class="tab-panel" role="tabpanel" hidden>
 
     <div class="setting-group">
-      <label class="setting-label" for="api-key-input">Gemini API Key</label>
+      <label class="setting-label" for="gemini-key-input">Gemini API Key</label>
       <div class="api-key-row">
-        <input
-          type="password"
-          id="api-key-input"
-          class="input"
-          placeholder="AIza…"
-          autocomplete="off"
-          spellcheck="false"
-        >
-        <button class="btn btn-ghost btn-icon" id="btn-toggle-key" title="Show/hide key" aria-label="Show/hide key">
-          <svg id="icon-eye" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-            <circle cx="12" cy="12" r="3"/>
+        <input type="password" id="gemini-key-input" class="input" placeholder="AIza…" autocomplete="off" spellcheck="false">
+        <button class="btn btn-ghost btn-icon" data-toggle-target="gemini-key-input" title="Show/hide">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
           </svg>
         </button>
       </div>
-      <p class="hint">
-        Get a free key at <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Google AI Studio</a>.
-        Stored locally — never sent anywhere except the Gemini API.
-      </p>
+      <p class="hint">Get a free key at <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Google AI Studio</a>.</p>
+    </div>
+
+    <div class="setting-group">
+      <label class="setting-label" for="os-key-input">OpenSubtitles API Key</label>
+      <div class="api-key-row">
+        <input type="password" id="os-key-input" class="input" placeholder="API key…" autocomplete="off" spellcheck="false">
+        <button class="btn btn-ghost btn-icon" data-toggle-target="os-key-input" title="Show/hide">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+          </svg>
+        </button>
+      </div>
+      <p class="hint">Get a free key at <a href="https://www.opensubtitles.com/en/consumers" target="_blank" rel="noopener">opensubtitles.com</a>.</p>
     </div>
 
     <div class="setting-group">
       <p class="setting-label">Auto-skip by confidence</p>
 
       <label class="toggle-row">
-        <span class="toggle-label">
-          <span class="confidence-dot dot-high"></span>
-          High confidence — skip immediately
-        </span>
+        <span class="toggle-label"><span class="confidence-dot dot-high"></span>High — skip immediately</span>
         <input type="checkbox" id="chk-high" class="toggle-input" role="switch">
         <span class="toggle-track"><span class="toggle-thumb"></span></span>
       </label>
 
       <label class="toggle-row">
-        <span class="toggle-label">
-          <span class="confidence-dot dot-medium"></span>
-          Medium confidence — show banner
-        </span>
+        <span class="toggle-label"><span class="confidence-dot dot-medium"></span>Medium — show banner</span>
         <input type="checkbox" id="chk-medium" class="toggle-input" role="switch">
         <span class="toggle-track"><span class="toggle-thumb"></span></span>
       </label>
 
       <label class="toggle-row">
-        <span class="toggle-label">
-          <span class="confidence-dot dot-low"></span>
-          Low confidence — show banner
-        </span>
+        <span class="toggle-label"><span class="confidence-dot dot-low"></span>Low — show banner</span>
         <input type="checkbox" id="chk-low" class="toggle-input" role="switch">
         <span class="toggle-track"><span class="toggle-thumb"></span></span>
       </label>
-
-      <p class="hint">High-confidence scenes are skipped without any prompt. Medium and low confidence scenes pause playback and show a banner.</p>
     </div>
 
     <div class="setting-actions">

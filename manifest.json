@@ -1,11 +1,10 @@
 {
   "manifest_version": 3,
   "name": "SceneSkipper",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Detects and skips explicit scenes on streaming sites using AI subtitle analysis.",
 
   "permissions": [
-    "webRequest",
     "storage",
     "tabs"
   ],

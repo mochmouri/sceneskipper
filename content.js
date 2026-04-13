@@ -29,10 +29,6 @@
 
   browser.runtime.onMessage.addListener((msg) => {
     switch (msg.type) {
-      case 'VTT_DETECTED':
-        setStatus('processing');
-        break;
-
       case 'PROCESSING_START':
         movieTitle = msg.movieTitle || movieTitle;
         setStatus('processing');
