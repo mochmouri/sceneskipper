@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SceneSkipper</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+
+  <header class="header">
+    <div class="header-logo">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <polygon points="5 3 19 12 5 21 5 3"/>
+        <line x1="19" y1="3" x2="19" y2="21"/>
+      </svg>
+      SceneSkipper
+    </div>
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-tab="history" role="tab" aria-selected="true">History</button>
+      <button class="tab" data-tab="settings" role="tab" aria-selected="false">Settings</button>
+    </nav>
+  </header>
+
+  <!-- ── History tab ─────────────────────────────────────────── -->
+  <section id="tab-history" class="tab-panel active" role="tabpanel">
+    <div id="history-empty" class="empty-state" hidden>
+      <div class="empty-icon">📂</div>
+      <p>No movies analysed yet.</p>
+      <p class="hint">Play something on Netflix, Prime Video, Disney+, or another supported site with subtitles enabled.</p>
+    </div>
+
+    <div id="history-list"></div>
+
+    <div class="history-footer" id="history-footer" hidden>
+      <button class="btn btn-ghost btn-sm" id="btn-clear-all">Clear all history</button>
+    </div>
+  </section>
+
+  <!-- ── Settings tab ────────────────────────────────────────── -->
+  <section id="tab-settings" class="tab-panel" role="tabpanel" hidden>
+
+    <div class="setting-group">
+      <label class="setting-label" for="api-key-input">Gemini API Key</label>
+      <div class="api-key-row">
+        <input
+          type="password"
+          id="api-key-input"
+          class="input"
+          placeholder="AIza…"
+          autocomplete="off"
+          spellcheck="false"
+        >
+        <button class="btn btn-ghost btn-icon" id="btn-toggle-key" title="Show/hide key" aria-label="Show/hide key">
+          <svg id="icon-eye" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+            <circle cx="12" cy="12" r="3"/>
+          </svg>
+        </button>
+      </div>
+      <p class="hint">
+        Get a free key at <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Google AI Studio</a>.
+        Stored locally — never sent anywhere except the Gemini API.
+      </p>
+    </div>
+
+    <div class="setting-group">
+      <p class="setting-label">Auto-skip by confidence</p>
+
+      <label class="toggle-row">
+        <span class="toggle-label">
+          <span class="confidence-dot dot-high"></span>
+          High confidence — skip immediately
+        </span>
+        <input type="checkbox" id="chk-high" class="toggle-input" role="switch">
+        <span class="toggle-track"><span class="toggle-thumb"></span></span>
+      </label>
+
+      <label class="toggle-row">
+        <span class="toggle-label">
+          <span class="confidence-dot dot-medium"></span>
+          Medium confidence — show banner
+        </span>
+        <input type="checkbox" id="chk-medium" class="toggle-input" role="switch">
+        <span class="toggle-track"><span class="toggle-thumb"></span></span>
+      </label>
+
+      <label class="toggle-row">
+        <span class="toggle-label">
+          <span class="confidence-dot dot-low"></span>
+          Low confidence — show banner
+        </span>
+        <input type="checkbox" id="chk-low" class="toggle-input" role="switch">
+        <span class="toggle-track"><span class="toggle-thumb"></span></span>
+      </label>
+
+      <p class="hint">High-confidence scenes are skipped without any prompt. Medium and low confidence scenes pause playback and show a banner.</p>
+    </div>
+
+    <div class="setting-actions">
+      <button class="btn btn-primary" id="btn-save">Save settings</button>
+      <span class="save-feedback" id="save-feedback" hidden>Saved</span>
+    </div>
+
+  </section>
+
+  <script src="popup.js"></script>
+</body>
+</html>

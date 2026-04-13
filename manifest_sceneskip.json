@@ -1,0 +1,59 @@
+{
+  "manifest_version": 3,
+  "name": "SceneSkipper",
+  "version": "1.0.0",
+  "description": "Detects and skips explicit scenes on streaming sites using AI subtitle analysis.",
+
+  "permissions": [
+    "webRequest",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+
+  "background": {
+    "service_worker": "background.js"
+  },
+
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.netflix.com/*",
+        "*://*.primevideo.com/*",
+        "*://*.disneyplus.com/*",
+        "*://*.hbomax.com/*",
+        "*://*.max.com/*",
+        "*://*.hulu.com/*",
+        "*://*.peacocktv.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "SceneSkipper",
+    "default_icon": {
+      "16": "icons/icon16.svg",
+      "48": "icons/icon48.svg",
+      "128": "icons/icon128.svg"
+    }
+  },
+
+  "icons": {
+    "16": "icons/icon16.svg",
+    "48": "icons/icon48.svg",
+    "128": "icons/icon128.svg"
+  },
+
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "sceneskipper@mochmo",
+      "strict_min_version": "109.0"
+    }
+  }
+}
