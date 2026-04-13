@@ -20,7 +20,7 @@ streaming sites using AI subtitle analysis.
 1. Open Firefox and navigate to `about:debugging`
 2. Click **This Firefox** in the left sidebar
 3. Click **Load Temporary Add-on…**
-4. Navigate to the `sceneskipper` folder and select `manifest_sceneskip.json`
+4. Navigate to the `sceneskipper` folder and select `manifest.json`
 5. The extension icon (▶|) will appear in your toolbar
 
 > **Note:** Temporary add-ons are removed when Firefox restarts. To install
@@ -93,7 +93,7 @@ The **History** tab in the popup lists every film analysed, with:
 ## File structure
 
 ```
-manifest_sceneskip.json   — MV3 manifest
+manifest.json             — MV3 manifest
 background.js             — service worker: VTT interception, Gemini API, storage
 content.js                — injected into streaming pages: video monitoring, banners
 popup.html                — extension popup
